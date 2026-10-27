@@ -24,6 +24,21 @@ import {
   type Operation,
 } from "./drafts";
 import type { DiaryData } from "./schema";
+import { AutoSyncQueue, type SyncStatus } from "./auto-sync";
+import {
+  clearConnection,
+  deviceConnectionKey,
+  readConnection,
+  storeConnection,
+  type Connection,
+} from "./connection";
+import {
+  GitHubError,
+  publishDraft,
+  readLatestDiary,
+  verifyConnection,
+  type PublishConflict,
+} from "./github-publish";
 type Editor = { kind: EditableKind; id?: string };
 function initialState() {
   try {
@@ -50,9 +65,143 @@ function useDiaryState() {
   const [error, setError] = useState(initial.error);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [toast, setToast] = useState("");
+  const [connection, setConnection] = useState<Connection | null>(() => {
+    try {
+      return readConnection(localStorage, sessionStorage);
+    } catch {
+      return null;
+    }
+  });
+  const connectionRef = useRef(connection);
+  connectionRef.current = connection;
+  const [connecting, setConnecting] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
+    phase: "idle",
+    message: "连接 GitHub 后，保存的记录会自动同步。",
+  });
+  const [remoteConflict, setRemoteConflict] = useState<{
+    data: DiaryData;
+    ops: Operation[];
+  } | null>(null);
+  const remoteShaRef = useRef<string | undefined>(undefined);
+  const readVersion = useRef(0);
+  const connectVersion = useRef(0);
   const rawRef = useRef(initial.raw);
   const applied = applyOperations(base, draft.operations);
   const pending = applied.remaining.filter(isPending);
+  const current = useRef({ base, error });
+  current.current = { base, error };
+  const queueRef = useRef<AutoSyncQueue | null>(null);
+  if (!queueRef.current)
+    queueRef.current = new AutoSyncQueue({
+      getOperations: () => {
+        if (current.current.error) return [];
+        try {
+          const raw = localStorage.getItem(draftKey);
+          const latest = raw ? parseDraft(JSON.parse(raw)) : emptyDraft();
+          return applyOperations(
+            current.current.base,
+            latest.operations,
+          ).remaining.filter(isPending);
+        } catch {
+          setError("本机草稿无法读取，请先在同步与备份中导出草稿原文。");
+          return [];
+        }
+      },
+      publish: async (operations, signal) => {
+        const active = connectionRef.current;
+        if (!active) throw new GitHubError("请先连接 GitHub。", 401, false);
+        readVersion.current++;
+        const run = () => publishDraft(active.token, operations, fetch, signal);
+        return navigator.locks
+          ? navigator.locks.request("baobao-github-auto-sync", { signal }, run)
+          : run();
+      },
+      accept: (result, sent) => {
+        acknowledge(result.sha, sent);
+        readVersion.current++;
+        remoteShaRef.current = result.sha;
+        setBase(result.data);
+        setRemoteConflict(null);
+      },
+      onStatus: setSyncStatus,
+      onConflict: (failure: PublishConflict) =>
+        setRemoteConflict({ data: failure.remote, ops: failure.operations }),
+      online: () => navigator.onLine !== false,
+    });
+  const pendingSignature = JSON.stringify(pending);
+  useEffect(() => {
+    if (connection) queueRef.current!.activate();
+    else queueRef.current!.pause();
+    return () => queueRef.current!.pause();
+  }, [connection]);
+  useEffect(() => {
+    queueRef.current!.notify();
+  }, [pendingSignature]);
+  async function refreshLatest() {
+    const version = ++readVersion.current;
+    try {
+      const latest = await readLatestDiary(
+        remoteShaRef.current,
+        connectionRef.current?.token ?? "",
+      );
+      if (version !== readVersion.current) return;
+      if (latest.data) setBase(latest.data);
+      remoteShaRef.current = latest.sha;
+    } catch {
+      /* A failed public refresh keeps the last validated repository data and local drafts. */
+    }
+  }
+  useEffect(() => {
+    void refreshLatest();
+    const update = () => {
+      if (document.visibilityState === "visible") void refreshLatest();
+    };
+    const online = () => {
+      queueRef.current!.notify(0);
+      update();
+    };
+    const timer = setInterval(update, 120000);
+    window.addEventListener("online", online);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      readVersion.current++;
+      clearInterval(timer);
+      window.removeEventListener("online", online);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  async function connect(token: string, remember: boolean) {
+    const version = ++connectVersion.current;
+    setConnecting(true);
+    try {
+      await verifyConnection(token);
+      if (version !== connectVersion.current) return;
+      const value = { token: token.trim(), remember };
+      storeConnection(value, localStorage, sessionStorage);
+      setConnection(value);
+      setRemoteConflict(null);
+      setToast("GitHub 已连接，保存后会自动同步。");
+    } finally {
+      if (version === connectVersion.current) setConnecting(false);
+    }
+  }
+  function disconnect() {
+    connectVersion.current++;
+    setConnecting(false);
+    queueRef.current!.pause();
+    try {
+      clearConnection(localStorage, sessionStorage);
+    } finally {
+      setConnection(null);
+      connectionRef.current = null;
+    }
+    setToast("已断开 GitHub；未同步记录仍在本机保留。");
+  }
+  function retrySync() {
+    setRemoteConflict(null);
+    queueRef.current!.retry();
+  }
   function persist(next: Draft) {
     const raw = JSON.stringify(next);
     try {
@@ -72,6 +221,10 @@ function useDiaryState() {
   }
   useEffect(() => {
     function changed(e: StorageEvent) {
+      if (e.key === deviceConnectionKey) {
+        setConnection(readConnection(localStorage, sessionStorage));
+        return;
+      }
       if (e.key !== draftKey) return;
       try {
         const next = e.newValue
@@ -106,7 +259,11 @@ function useDiaryState() {
       savedAt: new Date().toISOString(),
       operations: stageOperation(base, applied.remaining, kind, id, after),
     });
-    setToast("已保存到本机草稿，尚未发布到 GitHub。");
+    setToast(
+      connectionRef.current
+        ? "已保存，正在自动同步到 GitHub。"
+        : "已保存到本机草稿；连接 GitHub 后会自动同步。",
+    );
   }
   function remove(kind: EditableKind, id: string) {
     if (kind === "profile") throw new Error("档案不能删除");
@@ -115,7 +272,11 @@ function useDiaryState() {
       savedAt: new Date().toISOString(),
       operations: stageOperation(base, applied.remaining, kind, id, null),
     });
-    setToast("已加入删除草稿；发布后才会更新 GitHub。");
+    setToast(
+      connectionRef.current
+        ? "删除已保存，正在自动同步到 GitHub。"
+        : "已加入删除草稿；连接 GitHub 后会自动同步。",
+    );
   }
   function restore(kind: EditableKind, id: string) {
     persist({
@@ -137,7 +298,11 @@ function useDiaryState() {
     );
     applyOperations(base, merged.operations);
     persist(merged);
-    setToast("已恢复为本机草稿，尚未发布。");
+    setToast(
+      connectionRef.current
+        ? "草稿已恢复，正在准备自动同步。"
+        : "草稿已恢复到本机；连接 GitHub 后会自动同步。",
+    );
   }
   function acknowledge(sha: string, sent: Operation[]) {
     const raw = localStorage.getItem(draftKey);
@@ -148,9 +313,7 @@ function useDiaryState() {
     });
     rawRef.current = raw;
     persist({ ...latest, savedAt: new Date().toISOString(), operations: ops });
-    setToast(
-      "已提交到 GitHub。等待 Actions 部署完成后，所有设备才会看到更新。",
-    );
+    setToast("已自动同步到 GitHub，其他设备刷新即可查看。");
   }
   function resolve(remote: DiaryData, op: Operation, keepLocal: boolean) {
     const operations = applied.remaining.filter(
@@ -164,6 +327,7 @@ function useDiaryState() {
       });
     persist({ ...draft, savedAt: new Date().toISOString(), operations });
     setBase(remote);
+    queueRef.current!.retry();
   }
   return {
     data: applied.data,
@@ -183,6 +347,16 @@ function useDiaryState() {
     importDraft,
     acknowledge,
     resolve,
+    connected: !!connection,
+    remembered: connection?.remember ?? false,
+    connecting,
+    connect,
+    disconnect,
+    syncStatus,
+    retrySync,
+    refreshLatest,
+    remoteConflict,
+    setRemoteConflict,
   };
 }
 export function DiaryProvider({ children }: { children: ReactNode }) {

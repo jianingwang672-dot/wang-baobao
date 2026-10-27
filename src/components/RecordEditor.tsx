@@ -33,7 +33,7 @@ export function AddRecordButton({
   );
 }
 export function EntryActions({ kind, id }: { kind: EditableKind; id: string }) {
-  const { setEditor, remove, draft } = useDiary();
+  const { setEditor, remove, draft, connected } = useDiary();
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState("");
   const op = draft.operations.find((o) => o.kind === kind && o.id === id);
@@ -66,8 +66,9 @@ export function EntryActions({ kind, id }: { kind: EditableKind; id: string }) {
             <span className="eyebrow">KEEP ONLY WHAT IS TRUE</span>
             <h2>删除这条{kindNames[kind]}？</h2>
             <p>
-              会先加入本机删除草稿，发布到 GitHub
-              后才会对所有设备生效。发布前可在“记录与备份”撤销。
+              {connected
+                ? "确认后会自动删除 GitHub 中的这条记录，其他设备也会更新。"
+                : "会先加入本机删除草稿，连接 GitHub 后自动同步删除。"}
             </p>
             {error && (
               <p className="form-error" role="alert">
@@ -92,7 +93,7 @@ export function EntryActions({ kind, id }: { kind: EditableKind; id: string }) {
                   }
                 }}
               >
-                加入删除草稿
+                {connected ? "删除并自动同步" : "加入删除草稿"}
               </button>
             </div>
           </div>
@@ -102,8 +103,15 @@ export function EntryActions({ kind, id }: { kind: EditableKind; id: string }) {
   );
 }
 export function DraftStatus() {
-  const { draft, pending, conflicts, error } = useDiary();
-  if (!draft.operations.length && !error) return null;
+  const { draft, pending, conflicts, error, connected, syncStatus } =
+    useDiary();
+  if (!draft.operations.length && !error && !connected)
+    return (
+      <div className="sync-connect-hint">
+        <span>想让记录自动同步？</span>
+        <a href="#manage">连接 GitHub 一次 ↗</a>
+      </div>
+    );
   return (
     <div
       className={`draft-status ${error || conflicts.length ? "has-error" : ""}`}
@@ -117,21 +125,27 @@ export function DraftStatus() {
             : conflicts.length
               ? `${conflicts.length} 条记录需要核对`
               : pending.length
-                ? `本机有 ${pending.length} 项未发布修改`
-                : "已提交到 GitHub，等待网站部署"}
+                ? connected
+                  ? syncStatus.message
+                  : `本机有 ${pending.length} 项待同步修改`
+                : connected
+                  ? "已连接 · 自动同步已开启"
+                  : "已同步到 GitHub"}
         </strong>
         <span>
           {error ||
             (pending.length
-              ? "当前页面包含本机草稿；其他设备还看不到这些修改。"
-              : "刷新后仍会保留本机预览，正式版本由 GitHub Actions 更新。")}
+              ? connected
+                ? "记录会自动提交；同步成功前会安全保留在本机。"
+                : "连接 GitHub 后会自动同步，不需要手动导出。"
+              : "正式记录保存在 GitHub，其他设备刷新即可获取最新记录。")}
         </span>
       </div>
       <a href="#manage">
         {error || conflicts.length
           ? "查看详情"
           : pending.length
-            ? "备份与发布"
+            ? "同步设置"
             : "查看提交"}
         <span>↗</span>
       </a>
@@ -139,7 +153,7 @@ export function DraftStatus() {
   );
 }
 function RecordForm({ kind, id }: { kind: EditableKind; id?: string }) {
-  const { data, save, setEditor } = useDiary();
+  const { data, save, setEditor, connected } = useDiary();
   const [original] = useState(() => entryAt(data, kind, id ?? ""));
   const [error, setError] = useState("");
   const [changed, setChanged] = useState(false);
@@ -420,8 +434,9 @@ function RecordForm({ kind, id }: { kind: EditableKind; id?: string }) {
         <div className="local-save-note">
           <NotebookPen size={17} />
           <p>
-            先保存到<strong>本机草稿</strong>。发布到 GitHub
-            后，才会同步到其他设备。请及时导出备份。
+            {connected
+              ? "已开启自动同步。保存后会自动写入 GitHub，失败时保留记录并重试。"
+              : "尚未连接 GitHub，先保存到本机。连接一次后，新增、编辑和删除都会自动同步。"}
           </p>
         </div>
         {error && (
@@ -456,7 +471,7 @@ function RecordForm({ kind, id }: { kind: EditableKind; id?: string }) {
             </button>
             <button className="primary-button" type="submit">
               <Check size={16} />
-              保存到本机草稿
+              {connected ? "保存并自动同步" : "保存到本机草稿"}
             </button>
           </div>
         )}
@@ -476,7 +491,7 @@ export function DiaryOverlays() {
           <Check size={18} />
           <span>{toast}</span>
           <a href="#manage" onClick={() => setToast("")}>
-            查看与发布
+            同步设置
           </a>
           <button onClick={() => setToast("")} aria-label="关闭提示">
             ×

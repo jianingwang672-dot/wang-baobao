@@ -11,24 +11,34 @@ export class PublishConflict extends Error {
   }
 }
 type Request = typeof fetch;
-// The token is only passed in this function's request headers, never URLs, storage, or exports.
-export async function publishDraft(
-  token: string,
-  operations: Operation[],
-  request: Request = fetch,
-) {
-  if (!token.trim())
-    throw new Error("请填写仅限 wang-baobao 仓库的 GitHub 令牌。");
+export class GitHubError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public retryable: boolean,
+  ) {
+    super(message);
+  }
+}
+export type PublishResult = {
+  sha: string;
+  url: string;
+  alreadySaved: boolean;
+  data: DiaryData;
+};
+// Credentials are only sent to api.github.com. Connection storage is handled separately.
+function apiClient(token: string, request: Request, signal?: AbortSignal) {
   const headers = {
     Accept: "application/vnd.github+json",
-    Authorization: `Bearer ${token.trim()}`,
+    ...(token.trim() ? { Authorization: `Bearer ${token.trim()}` } : {}),
     "Content-Type": "application/json",
   };
-  async function call(
+  return async function call(
     path: string,
     method = "GET",
     body?: unknown,
   ): Promise<any> {
+    signal?.throwIfAborted();
     let response: Response;
     try {
       response = await request(`${api}${path}`, {
@@ -36,11 +46,17 @@ export async function publishDraft(
         headers,
         cache: "no-store",
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(30000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(30000)])
+          : AbortSignal.timeout(30000),
       });
     } catch {
-      throw new Error(
-        "网络请求未完成。草稿仍保留；请检查 GitHub 的最新提交后重试。",
+      if (signal?.aborted)
+        throw new DOMException("Sync cancelled", "AbortError");
+      throw new GitHubError(
+        "网络请求未完成，记录仍保留。请检查连接。",
+        0,
+        true,
       );
     }
     if (!response.ok) {
@@ -51,13 +67,84 @@ export async function publishDraft(
         409: "仓库刚刚更新，请重试；不会覆盖他人的提交。",
         422: "仓库出现并发修改或提交被拒绝，请检查 GitHub 后重试。",
       };
-      throw new Error(
+      throw new GitHubError(
         explanations[response.status] ??
           `GitHub 请求失败（${response.status}），草稿未清除。`,
+        response.status,
+        response.status >= 500 ||
+          response.status === 409 ||
+          response.status === 422 ||
+          (response.status === 403 &&
+            response.headers.get("x-ratelimit-remaining") === "0"),
       );
     }
     return response.json();
-  }
+  };
+}
+export async function verifyConnection(
+  token: string,
+  request: Request = fetch,
+  signal?: AbortSignal,
+) {
+  if (!token.trim() || token.length > 500)
+    throw new GitHubError(
+      "请填写仅限 wang-baobao 仓库的 GitHub 令牌。",
+      401,
+      false,
+    );
+  const call = apiClient(token, request, signal);
+  // A content-addressed empty blob verifies write permission without changing a branch or any diary data.
+  await call("/git/blobs", "POST", { content: "", encoding: "utf-8" });
+}
+export async function readLatestDiary(
+  knownSha?: string,
+  token = "",
+  request: Request = fetch,
+  signal?: AbortSignal,
+) {
+  const head = await apiClient(token, request, signal)("/git/ref/heads/main");
+  const sha = head.object.sha as string;
+  if (!/^[a-f0-9]{40}$/.test(sha))
+    throw new GitHubError("GitHub 返回的版本信息无效。", 0, true);
+  if (sha === knownSha) return { sha, data: null };
+  const keys = [
+    "profile",
+    "weights",
+    "feedings",
+    "shedding",
+    "milestones",
+    "photos",
+  ];
+  const values = await Promise.all(
+    keys.map(async (key) => {
+      const response = await request(
+        `https://raw.githubusercontent.com/${repository}/${sha}/src/data/${key}.json`,
+        {
+          cache: "no-store",
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(30000)])
+            : AbortSignal.timeout(30000),
+        },
+      );
+      if (!response.ok)
+        throw new GitHubError(
+          "暂时无法读取最新记录，仍保留当前页面内容。",
+          response.status,
+          true,
+        );
+      return [key, await response.json()];
+    }),
+  );
+  return { sha, data: validateData(Object.fromEntries(values)) };
+}
+export async function publishDraft(
+  token: string,
+  operations: Operation[],
+  request: Request = fetch,
+  signal?: AbortSignal,
+): Promise<PublishResult> {
+  if (!token.trim()) throw new GitHubError("请先连接 GitHub。", 401, false);
+  const call = apiClient(token, request, signal);
   const head = await call("/git/ref/heads/main");
   const parent = head.object.sha;
   const keys = [
@@ -91,6 +178,7 @@ export async function publishDraft(
       sha: parent,
       url: `https://github.com/${repository}/commit/${parent}`,
       alreadySaved: true,
+      data: remote,
     };
   const commit = await call(`/git/commits/${parent}`);
   const kinds = [...new Set(pending.map((op) => op.kind))];
@@ -117,5 +205,6 @@ export async function publishDraft(
     sha: created.sha,
     url: `https://github.com/${repository}/commit/${created.sha}`,
     alreadySaved: false,
+    data: merged.data,
   };
 }

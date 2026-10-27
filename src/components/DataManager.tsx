@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ConnectionPanel from "./ConnectionPanel";
 import {
   Download,
   Upload,
@@ -41,60 +42,29 @@ export default function DataManager() {
     restore,
     resetDamagedDraft,
     importDraft,
-    acknowledge,
+    connected,
+    remoteConflict,
+    setRemoteConflict,
     conflicts,
     resolve,
     setToast,
   } = useDiary();
   const [damagedReset, setDamagedReset] = useState(false);
   const [rawBackedUp, setRawBackedUp] = useState(false);
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [result, setResult] = useState("");
   const [collection, setCollection] = useState<Collection>("weights");
   const [discard, setDiscard] = useState<Operation | null>(null);
-  const [remoteConflict, setRemoteConflict] = useState<{
-    data: DiaryData;
-    ops: Operation[];
-  } | null>(null);
-  async function publish() {
-    setMessage("");
-    setResult("");
-    setRemoteConflict(null);
-    setBusy(true);
-    const snapshot = structuredClone(draft.operations);
-    try {
-      const r = await publishDraft(token, snapshot);
-      setResult(r.url);
-      try {
-        acknowledge(r.sha, snapshot);
-      } catch {
-        setMessage(
-          "GitHub 已收到提交，但本机草稿状态未能更新。请保留草稿，确认提交后再重试。",
-        );
-      }
-      setToast(
-        r.alreadySaved
-          ? "这些记录已存在于 GitHub，可查看部署状态。"
-          : "已提交到 GitHub，正在等待 Actions 部署。",
-      );
-    } catch (e) {
-      if (e instanceof PublishConflict)
-        setRemoteConflict({ data: e.remote, ops: e.operations });
-      setMessage((e as Error).message);
-    } finally {
-      setToken("");
-      setBusy(false);
-    }
-  }
   async function readFile(file: File) {
     try {
       if (file.size > 2 * 1024 * 1024)
         throw new Error("草稿文件超过 2 MB，请检查是否选择正确。");
       const parsed = JSON.parse(await file.text());
       importDraft(parsed);
-      setMessage("草稿已恢复到本机。未自动发布到 GitHub。");
+      setMessage(
+        connected
+          ? "草稿已恢复，将自动同步到 GitHub。"
+          : "草稿已恢复到本机，连接后将自动同步。",
+      );
     } catch (e) {
       setMessage((e as Error).message);
     }
@@ -112,12 +82,14 @@ export default function DataManager() {
         <h1>
           把今天，好好记下来<span className="title-dot">.</span>
         </h1>
-        <p>填写、核对，再发布。让每一份真实记录，都有长久的归处。</p>
+        <p>
+          连接 GitHub 后，保存就会自动同步。每一份真实记录，都有长久的归处。
+        </p>
       </header>
       <section className="panel quick-entry">
         <div>
           <h2>今天想记些什么？</h2>
-          <p>保存后可立即在本机预览，正式记录以 GitHub 为准。</p>
+          <p>保存后立即显示，已连接的设备会自动同步到 GitHub。</p>
         </div>
         <div className="quick-entry-buttons">
           {editableKinds.map((kind) => (
@@ -130,9 +102,11 @@ export default function DataManager() {
           <div className="manage-icon">
             <NotebookPen />
           </div>
-          <h2>本机草稿 · {pending.length} 项待发布</h2>
+          <h2>本机草稿 · {pending.length} 项待同步</h2>
           <p>
-            草稿仅保存在当前浏览器，不会自动同步。清理浏览器数据或更换设备前，请导出草稿文件。
+            {connected
+              ? "以下记录正在等待自动同步；网络失败时会保留在本机并重试。"
+              : "尚未连接 GitHub。填写的数据先保留在本机，连接后自动同步。"}
           </p>
           {error && (
             <p className="form-error" role="alert">
@@ -211,7 +185,7 @@ export default function DataManager() {
             <div className="draft-clear">
               <NotebookPen size={30} />
               <p>
-                本机没有未发布修改。
+                本机没有待同步记录。
                 <br />
                 点“记一笔”，开始今天的手账。
               </p>
@@ -220,7 +194,7 @@ export default function DataManager() {
           {conflicts.length > 0 && (
             <p className="form-error">
               有 {conflicts.length}{" "}
-              条记录与当前版本冲突。导出备份后，可撤销对应草稿，或在发布时核对版本。
+              条记录与当前版本冲突。导出备份后，可撤销对应草稿，或在同步设置中核对版本。
             </p>
           )}
           <div className="backup-buttons">
@@ -255,101 +229,7 @@ export default function DataManager() {
             Codex，即可代为发布；删除和修改也会完整保留。
           </p>
         </section>
-        <section className="panel publish-panel">
-          <div className="manage-icon">
-            <CloudUpload />
-          </div>
-          <h2>发布到 GitHub</h2>
-          <p>
-            会核对仓库最新记录，将修改保存到 <strong>wang-baobao</strong>
-            。Actions 部署完成后，其他设备就能看到。
-          </p>
-          <details className="token-help">
-            <summary>首次使用：怎样获取发布权限？</summary>
-            <ol>
-              <li>
-                打开{" "}
-                <a
-                  href="https://github.com/settings/personal-access-tokens/new"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  GitHub 细粒度令牌设置 ↗
-                </a>
-                。
-              </li>
-              <li>
-                Resource owner 选 <strong>jianingwang672-dot</strong>
-                ；Repository access 选{" "}
-                <strong>Only select repositories → wang-baobao</strong>。
-              </li>
-              <li>
-                Repository permissions 中仅将 <strong>Contents</strong> 设为{" "}
-                <strong>Read and write</strong>，设置合适的有效期后自行创建。
-              </li>
-              <li>
-                只把令牌粘贴到下面输入框。不要发到聊天或写进代码。使用后本页会清空令牌。
-              </li>
-            </ol>
-            <a
-              href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens"
-              target="_blank"
-              rel="noreferrer"
-            >
-              GitHub 官方说明 ↗
-            </a>
-          </details>
-          <label className="editor-field token-label">
-            GitHub 发布令牌
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              autoCapitalize="none"
-              placeholder="只在这次发布中使用"
-              disabled={busy}
-            />
-          </label>
-          <p className="manager-hint">
-            令牌仅在当前页面内存中使用，请求只发往
-            api.github.com；不会写入草稿、备份或网站源码。
-          </p>
-          <button
-            className="primary-button full"
-            disabled={busy || !pending.length || !token.trim() || !!error}
-            onClick={publish}
-          >
-            <CloudUpload size={16} />
-            {busy
-              ? "正在核对并提交…"
-              : `将 ${pending.length} 项修改发布到 GitHub`}
-          </button>
-          {!pending.length && draft.operations.length > 0 && (
-            <p className="manager-hint">
-              这些修改已提交到 GitHub。请查看 Actions，部署完成后刷新页面。
-            </p>
-          )}
-          {result && (
-            <div className="publish-result" role="status">
-              <strong>已写入 GitHub</strong>
-              <span>网站正在等待自动部署；此时还不能视为所有设备已更新。</span>
-              <a href={result} target="_blank" rel="noreferrer">
-                查看本次提交 ↗
-              </a>
-            </div>
-          )}
-          <a
-            className="text-link deployment-link"
-            href={`https://github.com/${repository}/actions`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            查看部署状态
-            <ArrowUpRight size={15} />
-          </a>
-        </section>
+        <ConnectionPanel />
       </div>
       {message && (
         <p className="manager-message" role="status">
@@ -390,7 +270,7 @@ export default function DataManager() {
                     );
                   }}
                 >
-                  保留网页草稿，稍后重新发布
+                  保留网页草稿并重新同步
                 </button>
                 <button
                   className="outline-button"

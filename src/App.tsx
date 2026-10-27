@@ -897,7 +897,7 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   useEffect(() => {
-    document.title = `${navigation.find((n) => n.id === page)?.label ?? "数据与备份"} · 王豹豹 BaoBao`;
+    document.title = `${navigation.find((n) => n.id === page)?.label ?? "同步与备份"} · 王豹豹 BaoBao`;
   }, [page]);
   return (
     <>
@@ -937,10 +937,10 @@ export default function App() {
           <a
             className={`header-save ${page === "manage" ? "active" : ""}`}
             href="#manage"
-            aria-label="数据维护与备份"
+            aria-label="同步设置与备份"
           >
             <Download size={17} />
-            <span>记录与备份</span>
+            <span>同步与备份</span>
           </a>
           <AddRecordButton
             compact
@@ -1005,7 +1005,7 @@ export default function App() {
             <p>
               王豹豹的成长手账 · 始于 2026{" "}
               <a href="#manage">
-                数据与备份
+                同步与备份
                 <ArrowUpRight size={12} />
               </a>
             </p>
