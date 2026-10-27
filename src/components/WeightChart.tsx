@@ -8,7 +8,7 @@ import {
   CartesianGrid,
   Tooltip,
 } from "recharts";
-import { data } from "../lib/data";
+import { useDiary } from "../lib/DiaryContext";
 import { weightStats, today, stamp, shortDate, fullDate } from "../lib/diary";
 import { Empty } from "./Shared";
 export default function WeightChart({
@@ -17,6 +17,7 @@ export default function WeightChart({
   compact?: boolean;
 }) {
   const [range, setRange] = useState("all");
+  const { data } = useDiary();
   const stats = weightStats(data);
   const cutoff =
     range === "all" ? 0 : stamp(today()) - (Number(range) - 1) * 86400000;
@@ -124,7 +125,7 @@ export default function WeightChart({
         </>
       ) : (
         <Empty title="这一段时光，还没有称重记录" icon="sprout">
-          换一个时间范围，或在仓库中添加真实体重。
+          换一个时间范围，或点“记一笔”添加真实体重。
         </Empty>
       )}
     </>

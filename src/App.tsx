@@ -24,7 +24,15 @@ import {
   ArrowLeftRight,
   ExternalLink,
 } from "lucide-react";
-import { data } from "./lib/data";
+import { useDiary } from "./lib/DiaryContext";
+import {
+  AddRecordButton,
+  EntryActions,
+  DraftStatus,
+  DiaryOverlays,
+} from "./components/RecordEditor";
+import DataManager from "./components/DataManager";
+import type { EditableKind } from "./lib/drafts";
 import {
   ageLabel,
   birthLabel,
@@ -56,9 +64,6 @@ const navigation = [
   { id: "health", label: "蜕皮与健康", icon: Leaf },
   { id: "timeline", label: "成长时间线", icon: BookOpen },
 ];
-const publishedPhotos = chronological(
-  data.photos.filter((p) => p.date <= today()),
-).reverse();
 const boolLabel = (v: boolean | null) =>
   v === null ? "待记录" : v ? "是" : "否";
 function WeightPanel({ compact = false }: { compact?: boolean }) {
@@ -77,6 +82,10 @@ function download(name: string, text: string, type: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function Dashboard() {
+  const { data } = useDiary();
+  const publishedPhotos = chronological(
+    data.photos.filter((p) => p.date <= today()),
+  ).reverse();
   const { profile } = data;
   const stats = weightStats(data);
   const days = companionDays(profile);
@@ -327,6 +336,10 @@ function Stat({
   );
 }
 function Album() {
+  const { data } = useDiary();
+  const publishedPhotos = chronological(
+    data.photos.filter((p) => p.date <= today()),
+  ).reverse();
   const [month, setMonth] = useState("all");
   const [active, setActive] = useState<string | null>(null);
   const [compare, setCompare] = useState(false);
@@ -500,10 +513,12 @@ function Album() {
   );
 }
 function WeightPage() {
+  const { data } = useDiary();
   const stats = weightStats(data);
   return (
     <>
       <PageHeading
+        kind="weights"
         eyebrow="EVERY GRAM COUNTS"
         title="一克一克，慢慢长大"
         description="只记录豹豹自己的成长节奏。没有标准曲线，每一次真实称重都很珍贵。"
@@ -575,6 +590,7 @@ function WeightPage() {
                   <th>体重</th>
                   <th>较上次</th>
                   <th>备注</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -592,6 +608,9 @@ function WeightPage() {
                           : "首次记录"}
                       </td>
                       <td className="muted">{r.notes || "—"}</td>
+                      <td>
+                        <EntryActions kind="weights" id={r.id} />
+                      </td>
                     </tr>
                   );
                 })}
@@ -608,6 +627,7 @@ function WeightPage() {
   );
 }
 function FeedingPage() {
+  const { data } = useDiary();
   const [month, setMonth] = useState("all");
   const rows = chronological(
     data.feedings.filter((r) => r.date <= today()),
@@ -618,6 +638,7 @@ function FeedingPage() {
   return (
     <>
       <PageHeading
+        kind="feedings"
         eyebrow="LITTLE BITES, HAPPY DAYS"
         title="今天，也有好好吃饭"
         description="记下每一顿小小的满足，也留意食欲细微的变化。"
@@ -659,6 +680,7 @@ function FeedingPage() {
                   <span>补充：{r.supplements || "待记录"}</span>
                 </div>
                 <p>{r.notes || "暂无备注"}</p>
+                <EntryActions kind="feedings" id={r.id} />
               </article>
             ))}
           </div>
@@ -672,12 +694,14 @@ function FeedingPage() {
   );
 }
 function HealthPage() {
+  const { data } = useDiary();
   const rows = chronological(
     data.shedding.filter((r) => r.date <= today()),
   ).reverse();
   return (
     <>
       <PageHeading
+        kind="shedding"
         eyebrow="A LITTLE CARE, EVERY DAY"
         title="每一次蜕变，都被看见"
         description="温柔观察，认真记录。收好每次蜕皮与日常状态的小线索。"
@@ -715,6 +739,7 @@ function HealthPage() {
                   </div>
                 </dl>
                 <p>{r.notes}</p>
+                <EntryActions kind="shedding" id={r.id} />
               </article>
             ))}
           </div>
@@ -732,6 +757,7 @@ function HealthPage() {
   );
 }
 function ActivityList({ limit }: { limit?: number }) {
+  const { data } = useDiary();
   const rows = activities(data).slice(0, limit);
   return rows.length ? (
     <div className="activity-list">
@@ -750,6 +776,20 @@ function ActivityList({ limit }: { limit?: number }) {
             <time>{fullDate(r.date)}</time>
             <h3>{r.title}</h3>
             {!limit && r.description && <p>{r.description}</p>}
+            {!limit && r.kind !== "photo" && r.id !== "arrival" && (
+              <EntryActions
+                kind={
+                  r.kind === "weight"
+                    ? "weights"
+                    : r.kind === "feeding"
+                      ? "feedings"
+                      : r.kind === "health"
+                        ? "shedding"
+                        : "milestones"
+                }
+                id={r.id}
+              />
+            )}
             {i === 0 && <small className="latest-tag">最新记录</small>}
           </div>
         </article>
@@ -765,6 +805,7 @@ function Timeline() {
   return (
     <>
       <PageHeading
+        kind="milestones"
         eyebrow="OUR LITTLE STORY"
         title="日子慢慢，故事长长"
         description="从一次称重到一个重要时刻。只收藏已经发生的，等待未来的惊喜。"
@@ -810,7 +851,9 @@ function PageHeading({
   eyebrow,
   title,
   description,
+  kind,
 }: {
+  kind?: EditableKind;
   eyebrow: string;
   title: string;
   description: string;
@@ -823,125 +866,16 @@ function PageHeading({
         <span className="title-dot">.</span>
       </h1>
       <p>{description}</p>
+      {kind && (
+        <div className="page-entry-action">
+          <AddRecordButton kind={kind} />
+        </div>
+      )}
     </header>
   );
 }
 function Manage() {
-  const [collection, setCollection] = useState<Collection>("weights");
-  const [exported, setExported] = useState("");
-  return (
-    <>
-      <PageHeading
-        eyebrow="KEEPING MEMORIES SAFE"
-        title="让记录，陪伴很多年"
-        description="正式数据保存在 GitHub 仓库中。更新、备份和迁移，都简单可靠。"
-      />
-      <div className="manage-grid">
-        <section className="panel">
-          <div className="manage-icon">
-            <GitBranch />
-          </div>
-          <h2>用仓库保存每一份成长</h2>
-          <p>
-            本网站展示的是已发布的 JSON
-            记录与静态照片。网页不直接修改数据，也不使用浏览器本地存储保存正式记录。
-          </p>
-          <ol className="steps">
-            <li>
-              <strong>把新记录或照片发给 Codex</strong>
-              <p>说明日期、体重或照片描述；不确定的信息可以留空。</p>
-            </li>
-            <li>
-              <strong>更新 JSON / 导入照片</strong>
-              <p>维护工具校验日期、格式、照片路径与重复 ID。</p>
-            </li>
-            <li>
-              <strong>检查并推送到 main</strong>
-              <p>GitHub Actions 构建并自动发布，所有设备看到同一份记录。</p>
-            </li>
-          </ol>
-          <a
-            className="outline-button"
-            href="https://github.com/jianingwang672-dot/wang-baobao"
-            target="_blank"
-            rel="noreferrer"
-          >
-            打开 GitHub 仓库
-            <ExternalLink size={15} />
-          </a>
-        </section>
-        <section className="panel">
-          <div className="manage-icon">
-            <Download />
-          </div>
-          <h2>给时光，多留一份备份</h2>
-          <p>
-            JSON 包含全部结构化数据。CSV 适合用表格查看。照片文件需另外从 GitHub
-            下载备份。
-          </p>
-          <button
-            className="primary-button full"
-            onClick={() => {
-              download(
-                `baobao-backup-${today()}.json`,
-                JSON.stringify(data, null, 2),
-                "application/json",
-              );
-              setExported("全部 JSON 数据已导出");
-            }}
-          >
-            <Download size={16} />
-            导出完整 JSON 数据
-          </button>
-          <label className="export-label">
-            选择 CSV 记录
-            <select
-              value={collection}
-              onChange={(e) => setCollection(e.target.value as Collection)}
-            >
-              {Object.entries({
-                weights: "体重",
-                feedings: "喂食",
-                shedding: "蜕皮与健康",
-                milestones: "里程碑",
-                photos: "照片索引",
-              }).map(([v, l]) => (
-                <option key={v} value={v}>
-                  {l}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="outline-button full"
-            onClick={() => {
-              download(
-                `baobao-${collection}-${today()}.csv`,
-                csv(data[collection]),
-                "text/csv;charset=utf-8",
-              );
-              setExported("CSV 已导出；空集合会导出空文件");
-            }}
-          >
-            <Download size={16} />
-            导出所选 CSV
-          </button>
-          <p className="export-status" role="status">
-            {exported && (
-              <>
-                <Check size={15} />
-                {exported}
-              </>
-            )}
-          </p>
-          <div className="backup-note">
-            <Heart size={16} />
-            <p>Git 历史也会保存每次修改。每一条成长记录，都有迹可循。</p>
-          </div>
-        </section>
-      </div>
-    </>
-  );
+  return <DataManager />;
 }
 export default function App() {
   const readRoute = () => {
@@ -1008,6 +942,18 @@ export default function App() {
             <Download size={17} />
             <span>记录与备份</span>
           </a>
+          <AddRecordButton
+            compact
+            kind={
+              page === "weight"
+                ? "weights"
+                : page === "health"
+                  ? "shedding"
+                  : page === "timeline"
+                    ? "milestones"
+                    : "feedings"
+            }
+          />
           <button
             className="mobile-menu icon-button"
             aria-expanded={menu}
@@ -1019,6 +965,7 @@ export default function App() {
         </div>
       </header>
       <main id="main-content" className="main-wrap" tabIndex={-1}>
+        <DraftStatus />
         <motion.div
           key={page}
           initial={reduced ? false : { opacity: 0, y: 8 }}
@@ -1042,6 +989,7 @@ export default function App() {
           )}
         </motion.div>
       </main>
+      <DiaryOverlays />
       <footer>
         <div className="footer-inner">
           <div>

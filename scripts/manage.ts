@@ -3,9 +3,32 @@ import { resolve } from "node:path";
 import { load, save, root, checkAssets } from "./store";
 import { recordSchemas, type Collection } from "../src/lib/schema";
 import { csv, today } from "../src/lib/diary";
+import { applyOperations, parseDraft, entryAt, same } from "../src/lib/drafts";
 async function main() {
   const [command, collection, arg] = process.argv.slice(2);
   const data = await load();
+  if (command === "apply-draft") {
+    if (!collection) throw new Error("请提供网页导出的 baobao-draft JSON 文件");
+    const draft = parseDraft(
+      JSON.parse(await readFile(resolve(collection), "utf8")),
+    );
+    const operations = draft.operations.filter(
+      (op) => !same(entryAt(data, op.kind, op.id), op.after),
+    );
+    const merged = applyOperations(data, operations);
+    if (merged.conflicts.length)
+      throw new Error(
+        "草稿与仓库同一条记录冲突，未写入。请核对：" +
+          merged.conflicts.map((op) => op.id).join("、"),
+      );
+    await checkAssets(merged.data);
+    for (const kind of new Set(operations.map((op) => op.kind)))
+      await save(kind, merged.data[kind]);
+    console.log(
+      "网页草稿已合并到本地正式 JSON。请测试、构建、提交后再报告发布完成。",
+    );
+    return;
+  }
   if (command === "validate") {
     await checkAssets(data);
     console.log("数据格式、唯一 ID、封面引用、照片文件校验通过。");

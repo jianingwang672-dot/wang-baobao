@@ -1,6 +1,30 @@
 # BaoBao's Growth Diary · 王豹豹的成长手账
 
-React + TypeScript + Vite + Tailwind CSS + Recharts + Lucide + Framer Motion。无需后端。正式数据随 Git 仓库版本管理，不使用 localStorage。
+React + TypeScript + Vite + Tailwind CSS + Recharts + Lucide + Framer Motion。无需后端。正式数据随 Git 仓库版本管理；localStorage 只用于明确标注、可导出的本机草稿。
+
+## 网页直接填写与发布
+
+点击顶栏“记一笔”，或进入喂食、体重、蜕皮与健康、成长时间线页面的“新增”按钮。填写真实日期与内容，未知值可以留空；表单不会默认判定正常进食、完整蜕皮、性别或品系。列表支持编辑、删除；档案表单可以修改估计生日、确切生日、到家日期等。
+
+保存到本机草稿后，会立即更新本机页面和体重图表。草稿不是正式发布记录：清理浏览器或更换设备前务必在“记录与备份”导出草稿文件。
+
+发布有两种方式：
+
+1. 无需令牌：导出 baobao-draft JSON 文件，交给 Codex。Codex 先拉取最新仓库，运行下面命令合并，再校验、测试、构建并推送 main：
+
+```sh
+npm run data -- apply-draft /path/baobao-draft.json
+```
+
+2. 自己发布：在 GitHub 自行创建仅授权 wang-baobao 仓库的细粒度令牌，Contents 权限为 Read and write。只在网站“记录与备份”的发布令牌框粘贴令牌，再点发布按钮。令牌仅保留在该组件内存中，请求只发往 api.github.com；提交尝试结束或离开该页面即清除，不进入 localStorage、导出文件、URL 或源码。令牌的创建与保管由主人自行完成。
+
+发布先读取最新 main，将变更按记录 ID 合并，并保留其他设备新增的无关记录。同一条记录冲突时必须选择保留哪个版本。多份 JSON 在同一个 Git 提交更新，引用更新禁止 force，避免覆盖并发提交；失败会保留草稿。若 GitHub 已收到了上次提交但浏览器未收到响应，重试会识别相同记录，避免重复新增。
+
+“已提交 GitHub”与“Pages 已部署”明确区分：提交成功仍需等待 Actions，部署完成后刷新网页。提交中的草稿会继续在本机预览，等新版网站包含这些记录后自动退出草稿视图。本机多标签页通过 storage 事件同步，打开的表单如遇同一记录变化会拒绝覆盖。
+
+草稿文件与完整数据备份不同：草稿文件包含合并所需的原始值和删除操作，可恢复到网页；完整数据 JSON/CSV 用于查看和长期备份。照片仍按原有静态资源流程导入，不能仅存在浏览器中。
+
+实现位置：lib/drafts.ts 负责三方合并与校验；lib/DiaryContext.tsx 负责草稿持久化与预览；lib/github-publish.ts 负责直接 GitHub 提交；RecordEditor.tsx 与 DataManager.tsx 提供录入、备份和发布界面。
 
 ## 启动与检查
 
@@ -31,7 +55,7 @@ tests/                     数据真实性边界及日期/导出测试
 
 ## 当前真实数据
 
-姓名王豹豹 / BaoBao；估计出生月为 2026-08，未指定某一天，年龄按月份近似计算并显示“约”。可在确认后填写 birthDate，优先使用确切生日。性别 unknown、品系 morph 为 null、到家日期 arrivalDate 为 null。10 g 为主人提供，日期暂按提供当日 2026-10-27 记录，若实际称重日期不同请修正。其他集合为空，插画只作占位。
+姓名王豹豹 / BaoBao；估计出生月为 2026-08，未指定某一天，年龄按月份近似计算并显示“约”。可在确认后填写 birthDate，优先使用确切生日。性别 unknown、品系 morph 为 null、到家日期 arrivalDate 为 null。10 g 为主人提供，日期暂按提供当日 2026-10-27 记录，若实际称重日期不同请修正。已收录主人提供并确认拍摄于 2026-10-27 的真实照片，设为首页封面。喂食、健康与成长事件仍为空，不填充示例数据。
 
 ## 以后交给 Codex 的更新指令
 
@@ -79,7 +103,7 @@ npm run photos -- /path/to/photo.jpg --date 2026-11-03 --id baobao-20261103-01 -
 
 ## 备份
 
-网页“记录与备份”支持完整 JSON 和各集合 CSV。CLI `export` 输出到 exports/当天日期/。CSV 防止备注被表格软件当公式执行。空集合的 CSV 为空文件。JSON 不包含照片二进制内容；请下载完整 GitHub 仓库（含 public/photos）作为整站备份。无需在浏览器填写后手动同步，不存在未发布浏览器草稿。
+网页“记录与备份”支持完整 JSON 和各集合 CSV。CLI `export` 输出到 exports/当天日期/。CSV 防止备注被表格软件当公式执行。空集合的 CSV 为空文件。JSON 不包含照片二进制内容；请下载完整 GitHub 仓库（含 public/photos）作为整站备份。网页表单保存的是本机草稿，发布前不会同步到其他设备。草稿导出保留新增、修改、删除及原始版本，支持恢复和冲突核对。
 
 ## GitHub Pages
 
