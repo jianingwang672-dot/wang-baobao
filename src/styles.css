@@ -1374,9 +1374,16 @@ select {
 }
 .compare-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 22px;
   margin-top: 28px;
+}
+.compare-grid > div {
+  min-width: 0;
+}
+.compare-grid select {
+  width: 100%;
+  min-width: 0;
 }
 .compare-grid label {
   display: flex;
