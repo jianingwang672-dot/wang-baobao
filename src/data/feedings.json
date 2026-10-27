@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "id": "feedings-8e5d30f6-60d9-4aae-b4e6-07278285b94f",
+    "date": "2026-10-27",
+    "notes": "",
+    "food": "冻蟋蟀",
+    "quantity": 3,
+    "unit": "只",
+    "normal": true,
+    "supplements": "无"
+  }
+]
