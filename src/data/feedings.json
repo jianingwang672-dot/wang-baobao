@@ -18,5 +18,15 @@
     "unit": "只",
     "normal": null,
     "supplements": "补了"
+  },
+  {
+    "id": "feedings-a756a771-12c2-4f8e-9f8c-ed6d3f0e00d5",
+    "date": "2026-10-29",
+    "notes": "",
+    "food": "冻蟋蟀",
+    "quantity": 2,
+    "unit": "只",
+    "normal": true,
+    "supplements": "补了"
   }
 ]
