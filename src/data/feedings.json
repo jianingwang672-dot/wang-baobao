@@ -16,7 +16,7 @@
     "food": "冻蟋蟀",
     "quantity": 1,
     "unit": "只",
-    "normal": null,
+    "normal": true,
     "supplements": "补了"
   },
   {
