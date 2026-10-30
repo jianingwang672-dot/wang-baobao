@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "id": "shedding-324baf31-9f5b-4f6c-bbc7-bad454221de6",
+    "date": "2026-10-30",
+    "notes": "",
+    "kind": "shedding",
+    "complete": true,
+    "retainedSkin": false,
+    "mood": "",
+    "stool": ""
+  }
+]
